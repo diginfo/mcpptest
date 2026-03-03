@@ -21,6 +21,8 @@ sys.path.insert(0, str(MODULE_DIR.parent))
 
 # We need to import mcpptool directly to get execute()
 import importlib.util
+import yaml
+
 spec = importlib.util.spec_from_file_location("mcpptool", MODULE_DIR / "mcpptool.py")
 mcpptool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mcpptool)
@@ -38,6 +40,20 @@ TASK_B = f"test-beta-{_ts}"
 passed = 0
 failed = 0
 cleanup_tasks = []
+
+
+CONFIG_PATH = MODULE_DIR / "config.yaml"
+
+
+def _set_config_value(key: str, value) -> None:
+    """Write a workflow config value directly to config.yaml."""
+    cfg = {}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f) or {}
+    cfg.setdefault("workflow", {})[key] = value
+    with open(CONFIG_PATH, "w") as f:
+        yaml.safe_dump(cfg, f, default_flow_style=False)
 
 
 def call(tool: str, args: dict | None = None) -> dict:
@@ -325,9 +341,8 @@ def test_task_complete_and_reopen():
     else:
         report("switch to completed denied", False, "expected failure but succeeded")
 
-    # Enable allow_reopen_completed
-    r = call("plan_config_set", {"section": "workflow", "key": "allow_reopen_completed", "value": True})
-    assert_ok(r, "enable allow_reopen_completed")
+    # Enable allow_reopen_completed (edit config.yaml directly — plan_config_set removed)
+    _set_config_value("allow_reopen_completed", True)
 
     # Now switch should succeed
     r = call("plan_task_switch", {"name": TASK_A})
@@ -338,7 +353,7 @@ def test_task_complete_and_reopen():
         report("switch to completed allowed", False, r.get("error", ""))
 
     # Reset config
-    call("plan_config_set", {"section": "workflow", "key": "allow_reopen_completed", "value": False})
+    _set_config_value("allow_reopen_completed", False)
 
 
 def test_reports():
@@ -394,22 +409,13 @@ def test_reports():
             pass
 
 
-def test_config_set():
-    """Test config set and show round-trip."""
-    print("\n== Config set/show ==")
+def test_config_set_removed():
+    """Test that plan_config_set is no longer available."""
+    print("\n== Config set removed ==")
 
     r = call("plan_config_set", {"section": "workflow", "key": "allow_reopen_completed", "value": True})
-    assert_ok(r, "config set")
-    cfg = r.get("result", {})
-    report("value updated", cfg.get("workflow", {}).get("allow_reopen_completed") is True)
-
-    r = call("plan_config_show")
-    assert_ok(r, "config show after set")
-    cfg = r.get("result", {})
-    report("value persisted", cfg.get("workflow", {}).get("allow_reopen_completed") is True)
-
-    # Reset
-    call("plan_config_set", {"section": "workflow", "key": "allow_reopen_completed", "value": False})
+    report("plan_config_set rejected", not r.get("success"))
+    report("error says unknown tool", "Unknown tool" in r.get("error", ""))
 
 
 def test_notes_set_get_delete():
@@ -553,7 +559,7 @@ def main():
         test_step_reorder()
         test_task_complete_and_reopen()
         test_reports()
-        test_config_set()
+        test_config_set_removed()
         test_notes_set_get_delete()
         test_step_notes_set_get_delete()
         test_show_switch_include_notes()
